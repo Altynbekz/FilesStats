@@ -1,0 +1,8 @@
+On a quiet Friday evening, Alex decided to explore an old folder on his computer. 
+Inside, he discovered several forgotten files containing notes, unfinished projects, and random ideas. 
+One document described a small application that could organize thousands of files automatically. 
+Curious, Alex opened his code editor and started writing a program in Go.
+At first, the program was simple. It could read directories, count files, and display their names. Later, he added concurrent processing using goroutines and channels. 
+Each worker received a file, analyzed its contents, and returned the results.
+After several hours of debugging, the application finally worked. What started as a small experiment had become a useful tool.
+Alex realized that programming was not just about learning syntax but about solving problems one step at a time.
