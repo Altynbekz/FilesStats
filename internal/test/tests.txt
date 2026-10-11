@@ -1,0 +1,3 @@
+Once you're comfortable with this, a good next exercise is to make each worker open the file and count its words/lines/bytes,
+ rather than only checking its extension. 
+ Then your concurrency example becomes closer to something you'd actually use.
