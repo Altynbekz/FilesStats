@@ -1,165 +1,82 @@
-# Concurrent Text Analyzer — Project Specification
+# FilesStats: concurrent text analyzer
 
-## Goal
+FilesStats is a Go exercise that scans a directory for `.txt` files, counts words in each file, and prints a separate report for each file. Several files can be processed at the same time with worker goroutines.
 
-Build a Go command-line program that scans a folder of text files, counts words, and prints a ranked report. It should continue processing when one file fails and should support processing several files concurrently.
+The code currently runs from `internal/analyzer`. The section [Project specification and remaining work](#project-specification-and-remaining-work) records the broader goal; it is not a list of features already finished.
 
-This project is complete when the same input produces the same word counts with one worker or several workers.
+## Run the current program
 
-## How a user runs it
+From the repository root, with a Go toolchain that supports the version in `go.mod`:
 
 ```bash
-go run . -dir ./samples -workers 4 -top 10
+go run ./internal/analyzer -dir ./internal/test -workers 4 -top 10
 ```
 
-| Option | Meaning | Default |
+You can also see the flags with `go run ./internal/analyzer -h`. Paths passed to `-dir` are relative to the **current working directory**, not to `internal/analyzer`. `go run .` from the repository root is not the analyzer entry point.
+
+| Flag | Default | Current meaning |
 | --- | --- | --- |
-| `-dir` | Folder to scan, including its subfolders | `.` |
-| `-workers` | Maximum number of files processed at once | `4` |
-| `-top` | Number of words to show in the ranking | `10` |
+| `-dir` | `.` | Starting directory for the recursive scan. |
+| `-workers` | `4` | Number of worker goroutines started to process files. |
+| `-top` | `10` | Maximum number of distinct words retained **per file**. |
 
-The program should reject an empty directory path and values of `-workers` or `-top` below `1` with a clear error message.
+The program prints each file's base name, its total word count, and its retained word counts. It also prints elapsed time with `fmt.Println` and `time.Since`. Report order can change between runs because workers finish in different orders. The order of words inside a report can also change because the retained words are stored in a Go map.
 
-## Required functionality
+There is currently no validation for empty `-dir`, nonpositive `-workers`, or nonpositive `-top`. Use a positive worker count and top value. Invalid values may hang or panic instead of producing a clear message.
 
-### 1. Discover files
+## How the current workflow works
 
-- Walk the requested folder recursively.
-- Include regular files whose extension is `.txt` (case-insensitive, so `.TXT` also counts).
-- Ignore other file types and directories.
-- Count how many eligible files were found.
-- If the starting folder does not exist or cannot be scanned, report the problem and exit with an error.
-- If no text files are found, print a valid report with zero counts.
+1. `run` reads the three CLI flags and calls `work`.
+2. `readDirectory` uses `filepath.WalkDir` to visit the starting path and its subdirectories. It adds the discovered path of each regular file whose extension is exactly lowercase `.txt`. Other extensions, including `.TXT`, are skipped.
+3. `work` creates a `jobs` channel of file paths and a `result` channel of `FileResult` values. It starts the requested number of workers, then a goroutine sends every discovered path into `jobs` and closes that channel.
+4. Each worker receives paths from `jobs` until it closes. For each path, `process` opens the file, counts its words, keeps up to `-top` words for that file, and sends one `FileResult` into `result`. A file error produces an error result and the worker continues with later jobs.
+5. A `sync.WaitGroup` tracks the workers. When all workers return, a separate goroutine closes `result`. Meanwhile, `work` receives results until the channel closes and returns the collected slice.
+6. `run` prints each collected result. `main` prints the elapsed time and, if `run` returned an error, prints that error.
 
-### 2. Define and count words
+The `jobs` channel is buffered to twice the worker count; the `result` channel is unbuffered. The collector reads results while workers send them, so the workers can continue. Workers do **not** update a shared totals map, and the current code uses no mutex. There is no combined folder-wide word count.
 
-- Treat a word as a consecutive sequence of Unicode letters.
-- Treat spaces, numbers, and punctuation as separators. For example, `go123lang` becomes `go` and `lang`.
-- Convert letters to lowercase before counting. `Go`, `GO`, and `go` are the same word.
-- Count each occurrence, not just each distinct word.
-- Empty files contribute zero words and still count as successfully processed.
+## What each source file does
 
-Example:
+All seven files below are in `internal/analyzer` and use `package main`.
 
-```text
-Input:  Go, go! Café 123 café.
-Counts: go=2, café=2
-Total:  4 words
-```
-
-The word-counting function should accept an `io.Reader`. This lets it read a file in the program and a string in a test.
-
-### 3. Process files concurrently
-
-- Put discovered file paths into a jobs channel.
-- Start the number of worker goroutines specified by `-workers`.
-- Each worker reads one file at a time and produces a result containing the file path, its word counts, and any error.
-- Collect all results before printing the final report.
-- Use a `sync.WaitGroup` to know when all workers have finished.
-- Protect shared totals and the combined word map with a `sync.Mutex`. Keep the mutex locked only while reading or changing that shared state.
-- Do not let a failure in one file prevent other files from being processed.
-
-### 4. Report results
-
-Print:
-
-1. Number of eligible files found.
-2. Number processed successfully.
-3. Number that failed.
-4. Total number of words in successful files.
-5. The requested number of most common words and their counts.
-6. The path and error for each failed file, if any.
-
-Sort words by count from highest to lowest. For words with the same count, sort alphabetically so the report is predictable.
-
-Example format (the numbers are illustrative):
-
-```text
-Files found:     8
-Files processed: 7
-Files failed:    1
-Total words:     1243
-
-Top 10 words
-1. go          82
-2. program     47
-3. file        39
-
-Failed files
-samples/broken.txt: permission denied
-```
-
-If there are fewer distinct words than `-top`, print only the words available. The order in which workers finish must not change the final ranking.
-
-## Suggested project layout
-
-```text
-text-analyzer/
-├── go.mod
-├── main.go                 # flags, validation, final output
-├── internal/
-│   ├── analyzer/
-│   │   ├── files.go        # find .txt files
-│   │   ├── words.go        # tokenize and count one reader
-│   │   ├── pool.go         # jobs, workers, and results
-│   │   ├── stats.go        # shared totals and mutex
-│   │   └── words_test.go   # word-counting tests
-│   └── counter/
-│       └── counter.go      # generic Counter[T comparable]
-└── samples/
-    ├── one.txt
-    └── two.txt
-```
-
-Create the module with `go mod init example.com/text-analyzer`. The `example.com` name is suitable for a local exercise; replace it with your repository path if you publish the code.
-
-## Where each Go topic fits
-
-| Topic | Application |
+| File | Current responsibility |
 | --- | --- |
-| Variables and constants | Store flag values and define defaults or status values. |
-| Formatting | Use `fmt` for errors and the final report. |
-| Conditionals | Validate inputs and handle empty folders or failed files. |
-| Functions | Separate discovery, counting, merging, sorting, and printing. |
-| Structs | Model `Config`, `FileResult`, `Stats`, and a ranked `WordCount`. |
-| Interfaces | Let the counting function accept `io.Reader`. |
-| Errors | Return and wrap errors; continue after individual file failures. |
-| Loops | Walk results, run workers, merge counts, and print rankings. |
-| Slices | Store paths, results, and sorted word/count pairs. |
-| Maps | Store counts by word. |
-| Pointers | Pass a shared `*Stats` to workers. |
-| Packages and modules | Organize the CLI and reusable code in one Go module. |
-| Channels | Send jobs to workers and results back to the collector. |
-| Mutexes | Protect the shared statistics while workers update them. |
-| Generics | Make a reusable `Counter[T comparable]`; use `Counter[string]` for words. |
-| Enum pattern | Define a `FileStatus` type with `iota` constants such as `Processed` and `Failed`. |
+| `flag.go` | Defines `serverConfig` and `loadConfig`. Registers `-dir`, `-workers`, and `-top`, sets usage text, parses flags, and returns the config. |
+| `files.go` | `readDirectory` walks the directory tree and returns matching paths. `readFile` converts file bytes to text and calls `tokenize`. `fileName` takes the last slash-separated part of a path for display. |
+| `words.go` | `tokenize` splits text wherever a rune is not a Unicode letter, then lowercases each word. Thus `Go, go!` becomes two `go` words, and `go123lang` becomes `go` and `lang`. |
+| `stats.go` | Defines the per-file data types `FileStats` and `FileResult`, plus `countWord(io.Reader)`. Despite the file name, it does not keep shared folder statistics. |
+| `pools.go` | Opens and processes files, runs the worker pool, sends jobs and results through channels, waits for workers, and collects results. |
+| `sort.go` | Defines a temporary `wordCount` pair. `sortTop` sorts one file's distinct words by descending count and then alphabetically for ties, keeps at most `top`, and puts them back into a map. |
+| `localMain.go` | Contains `run` and the program's `main`: invokes the workflow, prints per-file reports, and shows elapsed time or a returned error. |
 
-## Build order
+`go.mod` defines the module as `GoProject1`. `internal/test` contains sample input files; files with other extensions are ignored by the analyzer. `internal/counter.go` is currently only a package declaration, not a working generic counter.
 
-1. **Single reader:** Implement and test word counting using short strings.
-2. **One file:** Open a file, count it, and handle errors.
-3. **Folder:** Find `.txt` files and process them one at a time.
-4. **Report:** Merge counts, sort them, and print the requested top words.
-5. **Concurrency:** Add the jobs channel, workers, results channel, wait group, and mutex.
-6. **Generic counter:** Move reusable counting behavior into `Counter[T comparable]`.
+## Counting one file
 
-Keep the program working after each step. Add concurrency only after the one-worker report is correct.
+`process` opens a path with `os.Open` and defers closing it. It passes the open file to `countWord`, whose `io.Reader` parameter means the same function can also accept another reader, such as a string reader in a future test. `countWord` currently uses `io.ReadAll` to load the **entire** file into memory. It passes the bytes through `readFile` and `tokenize`, increments a `map[string]int` for each word, and increments `total` for every occurrence. An empty file gives an empty map and a total of zero.
 
-## Checks before calling it complete
+`FileStats` stores the display file name, that file's word-count map, and the total number of words before top-N filtering. `FileResult` stores a `FileStats` value plus an error. `sortTop` limits the map returned for display, but it does not change the total. If a file has fewer than `-top` distinct words, all its words are retained.
 
-- `Go, go! Café 123 café.` produces `go=2` and `café=2`.
-- An empty text file succeeds and adds zero words.
-- Files with other extensions are ignored.
-- `-top 20` works even when there are fewer than 20 distinct words.
-- Invalid flag values and a missing starting directory produce clear errors.
-- A failed file is listed, while other files still contribute to the report.
-- Running with `-workers 1` and `-workers 4` produces identical totals and rankings.
-- `go fmt ./...`, `go test ./...`, and `go test -race ./...` complete successfully.
+The temporary slice in `sortTop` has a predictable count-and-alphabetical order, but converting it back to a map loses that order. Consequently, the printed rows are **not** guaranteed to be ranked even though the set of retained top words is chosen by that ranking.
 
-## Tools
+## Errors and current limitations
 
-- **Go toolchain:** compile, run, format, and test the program.
-- **Code editor:** any editor with Go support.
-- **Terminal:** run the program and its checks.
-- **Go standard library:** `flag`, `fmt`, `io`, `os`, `path/filepath`, `sort`, `strings`, `sync`, `testing`, and `unicode`. No third-party package is required.
-# FilesStats
+- If `filepath.WalkDir` fails, `readDirectory` wraps the error, `work` returns it, and `main` prints it. The program does not currently exit with a nonzero status for that error.
+- If `os.Open` or `io.ReadAll` fails for one file, the worker sends an error result and continues. However, `run` currently ignores `FileResult.err` when printing, so a failed file appears as a blank-name, zero-total report. The error and failed path are not shown.
+- A successful scan with no matching files produces no file reports; it prints only elapsed time.
+- The scan accepts only regular files ending in lowercase `.txt`. It does not follow a symlink to a file as a regular file.
+- `fileName` splits paths on `/` rather than using `filepath.Base`, which can affect display names on platforms with another path separator.
+- There is no folder-wide count of files found, files processed, files failed, or total words; no merged word ranking; no tests in the current analyzer package; and no flag validation. The committed binary files are not needed for the `go run` command above.
+
+## Project specification and remaining work
+
+The original project goal is a CLI that scans a folder of text files, counts words, continues when an individual file fails, and prints a **folder-wide**, reproducible ranked report. The following describes that target behavior; see the sections above for what is already implemented.
+
+- Discover regular `.txt` files recursively, including case-insensitive extensions. Report a missing or unreadable starting directory clearly. An empty folder should produce a valid zero-count report.
+- Define a word as consecutive Unicode letters, lowercase it, and count every occurrence. For example, `Go, go! Café 123 café.` should yield `go=2`, `café=2`, and four total words. Keep the `io.Reader` interface so counting can be tested with strings as well as files.
+- Process files through a configurable worker pool. Keep processing after a file fails, and include its path and error in the final report.
+- Merge successful per-file counts into a folder-wide map and total. Report eligible files found, successful files, failed files, total words, and the requested number of most common words. Sort by descending count and alphabetically for ties, and print in that order. Results should be the same with one worker or several.
+- Validate that `-dir` is not empty and `-workers` and `-top` are at least one. When fewer distinct words exist than `-top`, show only those available.
+- Add meaningful tests for tokenization, empty files, filtering, errors, top-N bounds, and one-worker versus multiworker results. Run formatting, tests, and the race detector before calling the broader goal complete.
+
+The original learning plan also includes shared-state protection with `sync.Mutex` if workers update shared totals, a reusable generic `Counter[T comparable]`, and a `FileStatus` enum pattern. Those are possible next steps; they are **not** present in the current implementation. The existing collector gathers separate results, so it does not currently need a mutex for its result slice.
