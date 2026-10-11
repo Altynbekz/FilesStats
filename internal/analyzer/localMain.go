@@ -1,10 +1,15 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
 func main() {
-	files, _ := readDirectory("../test")
-	for _, file := range files {
-		fmt.Println(file)
-	}
+	data, _ := os.Open("../test/GOGO.txt")
+
+	stats, _ := statistics(data)
+
+	fmt.Println(stats)
+
 }
