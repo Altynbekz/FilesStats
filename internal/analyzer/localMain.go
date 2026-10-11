@@ -1,15 +1,7 @@
 package main
 
-import (
-	"fmt"
-	"os"
-)
+import ()
 
 func main() {
-	data, _ := os.Open("../test/GOGO.txt")
-
-	stats, _ := statistics(data)
-
-	fmt.Println(stats)
 
 }
