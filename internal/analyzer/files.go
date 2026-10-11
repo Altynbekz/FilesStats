@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func fileName(file string) string {
-	name := tokenize(file)
+	name := strings.Split(file, "/")
 	return name[len(name)-1]
 }
 
@@ -19,11 +20,7 @@ func readDirectory(path string) ([]string, error) {
 		}
 
 		if entry.Type().IsRegular() && filepath.Ext(entry.Name()) == ".txt" {
-			relativePath, err := filepath.Rel(path, currentPath)
-			if err != nil {
-				return err
-			}
-			content = append(content, relativePath)
+			content = append(content, currentPath)
 		}
 
 		return nil

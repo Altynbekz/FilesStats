@@ -37,6 +37,11 @@ func worker(
 	for job := range jobs {
 		stats, err := process(job, top)
 
+		if err != nil {
+			result <- FileResult{err: err}
+			continue
+		}
+
 		result <- FileResult{
 			fileStat: *stats,
 			err:      err,
@@ -81,5 +86,4 @@ func work(top, workers int, dir string) ([]FileResult, error) {
 	}
 
 	return content, nil
-
 }

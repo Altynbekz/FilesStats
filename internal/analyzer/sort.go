@@ -26,6 +26,11 @@ func sortTop(top int, words map[string]int) map[string]int {
 	})
 
 	newMap := map[string]int{}
+
+	if top > len(result) {
+		top = len(result)
+	}
+
 	for _, item := range result[:top] {
 		newMap[item.word] = item.count
 	}
